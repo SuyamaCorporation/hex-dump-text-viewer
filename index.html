@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hex Dump Text File Viewer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .hex-row { font-family: 'Courier New', monospace; }
+  .byte-nonprint { background-color: #fef9c3; color: #92400e; }
+  .byte-null { background-color: #fee2e2; color: #991b1b; }
+  .byte-high { background-color: #ede9fe; color: #5b21b6; }
+</style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen font-sans">
+<div class="max-w-6xl mx-auto px-4 py-8">
+  <h1 class="text-3xl font-bold text-center text-green-400 mb-2">Hex Dump Text Viewer</h1>
+  <p class="text-center text-gray-400 mb-6">Inspect text byte-by-byte in xxd-style hex dump format</p>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+    <div class="md:col-span-2">
+      <label for="input-text" class="block text-sm font-medium text-gray-300 mb-1">Input Text</label>
+      <textarea id="input-text" rows="5" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-green-300 font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y" placeholder="Paste or type text here..." aria-label="Input text for hex dump"></textarea>
+    </div>
+    <div class="flex flex-col gap-3">
+      <div>
+        <label for="encoding" class="block text-sm font-medium text-gray-300 mb-1">Encoding</label>
+        <select id="encoding" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500" aria-label="Select encoding">
+          <option value="utf8">UTF-8</option>
+          <option value="ascii">ASCII (7-bit)</option>
+          <option value="latin1">Latin-1 (ISO-8859-1)</option>
+        </select>
+      </div>
+      <div>
+        <label for="cols" class="block text-sm font-medium text-gray-300 mb-1">Bytes per Row</label>
+        <select id="cols" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 focus:outline-none focus:ring-2 focus:ring-green-500" aria-label="Bytes per row">
+          <option value="8">8</option>
+          <option value="16" selected>16</option>
+          <option value="32">32</option>
+        </select>
+      </div>
+      <div class="flex items-center gap-2 mt-2">
+        <input type="checkbox" id="highlight" checked class="w-4 h-4 accent-green-500" aria-label="Highlight non-printable bytes">
+        <label for="highlight" class="text-sm text-gray-300">Highlight non-printable bytes</label>
+      </div>
+      <div class="text-sm text-gray-400 mt-2" id="byte-count">0 bytes</div>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="flex flex-wrap gap-3 mb-4 text-xs">
+    <div class="flex items-center gap-1"><span class="px-2 py-0.5 rounded byte-nonprint">AB</span><span class="text-gray-400">Non-printable (0x01–0x1F, 0x7F)</span></div>
+    <div class="flex items-center gap-1"><span class="px-2 py-0.5 rounded byte-null">00</span><span class="text-gray-400">Null byte (0x00)</span></div>
+    <div class="flex items-center gap-1"><span class="px-2 py-0.5 rounded byte-high">FF</span><span class="text-gray-400">High byte (&gt;0x7F)</span></div>
+  </div>
+
+  <!-- Hex output -->
+  <div class="bg-gray-800 rounded-xl overflow-auto max-h-[60vh] border border-gray-700">
+    <div id="hex-output" class="p-4 hex-row text-sm leading-7" aria-label="Hex dump output" aria-live="polite"></div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+function textToBytes(text, encoding) {
+  if (encoding === 'utf8') {
+    const encoder = new TextEncoder();
+    return Array.from(encoder.encode(text));
+  } else if (encoding === 'ascii') {
+    const bytes = [];
+    for (let i = 0; i < text.length; i++) {
+      bytes.push(text.charCodeAt(i) & 0x7F);
+    }
+    return bytes;
+  } else { // latin1
+    const bytes = [];
+    for (let i = 0; i < text.length; i++) {
+      bytes.push(text.charCodeAt(i) & 0xFF);
+    }
+    return bytes;
+  }
+}
+
+function byteToChar(byte) {
+  if (byte >= 0x20 && byte < 0x7F) return String.fromCharCode(byte);
+  return '.';
+}
+
+function pad(n, width, char='0') {
+  return String(n).padStart(width, char);
+}
+
+function renderHex() {
+  const text = document.getElementById('input-text').value;
+  const encoding = document.getElementById('encoding').value;
+  const cols = parseInt(document.getElementById('cols').value);
+  const highlight = document.getElementById('highlight').checked;
+  const bytes = textToBytes(text, encoding);
+
+  document.getElementById('byte-count').textContent = bytes.length + ' bytes';
+
+  if (bytes.length === 0) {
+    document.getElementById('hex-output').textContent = '(no input)';
+    return;
+  }
+
+  let html = '';
+  for (let i = 0; i < bytes.length; i += cols) {
+    const row = bytes.slice(i, i + cols);
+    // offset
+    html += '<span class="text-gray-500">' + escapeHtml(pad(i, 8, '0')) + '</span>  ';
+
+    // hex bytes
+    const hexParts = [];
+    for (let j = 0; j < cols; j++) {
+      if (j < row.length) {
+        const b = row[j];
+        const hex = escapeHtml(pad(b.toString(16), 2));
+        if (highlight) {
+          if (b === 0x00) {
+            hexParts.push('<span class="byte-null rounded px-0.5">' + hex + '</span>');
+          } else if ((b < 0x20 || b === 0x7F) && b !== 0x09 && b !== 0x0A && b !== 0x0D) {
+            hexParts.push('<span class="byte-nonprint rounded px-0.5">' + hex + '</span>');
+          } else if (b > 0x7F) {
+            hexParts.push('<span class="byte-high rounded px-0.5">' + hex + '</span>');
+          } else {
+            hexParts.push('<span class="text-green-300">' + hex + '</span>');
+          }
+        } else {
+          hexParts.push('<span class="text-green-300">' + hex + '</span>');
+        }
+      } else {
+        hexParts.push('<span class="opacity-0">00</span>');
+      }
+      if (j === Math.floor(cols/2) - 1) hexParts.push(' ');
+    }
+    html += hexParts.join(' ');
+
+    // ASCII panel
+    html += '  <span class="text-yellow-300">|';
+    for (let j = 0; j < cols; j++) {
+      if (j < row.length) {
+        html += escapeHtml(byteToChar(row[j]));
+      } else {
+        html += ' ';
+      }
+    }
+    html += '|</span>\n';
+  }
+
+  document.getElementById('hex-output').innerHTML = html;
+}
+
+document.getElementById('input-text').addEventListener('input', renderHex);
+document.getElementById('encoding').addEventListener('change', renderHex);
+document.getElementById('cols').addEventListener('change', renderHex);
+document.getElementById('highlight').addEventListener('change', renderHex);
+
+// Default input
+document.getElementById('input-text').value = 'Hello, World!\nUnicode: café ☺\x00\x01\x1F';
+renderHex();
+</script>
+</body>
+</html>
